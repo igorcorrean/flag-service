@@ -19,7 +19,7 @@ load_dotenv()
 app = Flask(__name__)
 
 # --- Configuração ---
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL_FLAGS")
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL")
 
 if not DATABASE_URL or not AUTH_SERVICE_URL:

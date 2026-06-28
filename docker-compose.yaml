@@ -1,0 +1,86 @@
+services:
+  # ============================================================================
+  # 1. INFRAESTRUTURA DE BANCO DE DADOS LOCAL
+  # ============================================================================
+  
+  # Instância 1 do Postgres (Exclusiva para o auth-service)
+  db-auth:
+    image: postgres:15-alpine
+    container_name: tm-db-auth
+    environment:
+      POSTGRES_USER: ${POSTGRES_AUTH_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_AUTH_DB}
+    ports:
+      - "5431:5432" # Mapeado para 5431 na sua máquina para não conflitar se tiver Postgres local
+    volumes:
+      - postgres_auth_data:/var/lib/postgresql/data
+    networks:
+      - togglemaster-network
+
+  # Instância 2 do Postgres (Compartilhada entre flag e targeting)
+  db-flags:
+    image: postgres:15-alpine
+    container_name: tm-db-flags
+    environment:
+      POSTGRES_USER: ${POSTGRES_FLAGS_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_FLAGS_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_FLAGS_DB}
+    ports:
+      - "5432:5432" # Porta padrão exposta localmente
+    volumes:
+      - postgres_flags_data:/var/lib/postgresql/data
+      # Se quiser automatizar a criação da tabela do flag-service:
+      - ./flag-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - togglemaster-network
+
+
+  # ============================================================================
+  # 2. MICROSSERVIÇOS (APLICAÇÕES)
+  # ============================================================================
+
+  # auth-service (Go)
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: tm-auth-service
+    ports:
+      - "${PORT_AUTH_SERVICE}:8001"
+    environment:
+      - DATABASE_URL=${DATABASE_URL_AUTH}
+      - PORT=8001
+    depends_on:
+      - db-auth
+    networks:
+      - togglemaster-network
+
+  # flag-service (Python)
+  flag-service:
+    build:
+      context: ./flag-service
+      dockerfile: Dockerfile
+    container_name: tm-flag-service
+    ports:
+      - "${PORT_FLAG_SERVICE}:8002"
+    environment:
+      - DATABASE_URL=${DATABASE_URL_FLAGS}
+      - PORT=8002
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
+    depends_on:
+      - db-flags
+      - auth-service
+    networks:
+      - togglemaster-network
+
+# ==============================================================================
+# VOLUMES E REDES
+# ==============================================================================
+volumes:
+  postgres_auth_data:
+  postgres_flags_data:
+
+networks:
+  togglemaster-network:
+    driver: bridge
