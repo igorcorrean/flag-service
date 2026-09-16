@@ -34,7 +34,53 @@ try:
 except psycopg2.OperationalError as e:
     log.critical(f"Erro fatal ao conectar ao PostgreSQL: {e}")
     sys.exit(1)
+# --- Inicialização Automática das Tabelas (Melhor Prática) ---
+def init_db():
+    """Garante que a tabela 'flags' e seus triggers existam no RDS"""
+    sql_script = """
+    CREATE TABLE IF NOT EXISTS flags (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) UNIQUE NOT NULL, 
+        description TEXT,
+        is_enabled BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
 
+    CREATE OR REPLACE FUNCTION trigger_set_timestamp()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS set_timestamp ON flags;
+
+    CREATE TRIGGER set_timestamp
+    BEFORE UPDATE ON flags
+    FOR EACH ROW
+    EXECUTE PROCEDURE trigger_set_timestamp();
+    """
+    conn = None
+    cur = None
+    try:
+        # Pega uma conexão temporária do pool recém-criado
+        conn = pool.getconn()
+        cur = conn.cursor()
+        cur.execute(sql_script)
+        conn.commit()
+        log.info("Tabela 'flags' e Triggers verificados/criados com sucesso no RDS.")
+    except Exception as e:
+        log.error(f"Erro ao executar script de inicialização do banco: {e}")
+        # Não damos sys.exit(1) aqui para evitar que o app morra se for um erro transiente,
+        # mas em produção você pode optar por matar o processo caso o schema seja mandatório.
+    finally:
+        if cur: cur.close()
+        if conn: pool.putconn(conn) # Devolve a conexão para o pool usar na API
+
+# Executa a inicialização do banco de dados antes de liberar as rotas
+init_db()
 # --- Middleware de Autenticação ---
 def require_auth(f):
     """ Middleware para validar a chave de API contra o auth-service """
