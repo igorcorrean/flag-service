@@ -4,10 +4,12 @@ import psycopg2
 import requests
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from dotenv import load_dotenv
 from functools import wraps
 import logging
+from time import perf_counter
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Summary, generate_latest
 
 # Configura o logging
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +19,36 @@ log = logging.getLogger(__name__)
 load_dotenv() 
 
 app = Flask(__name__)
+
+http_requests = Counter(
+    'http_requests_total', 'Total number of HTTP requests',
+    ('service', 'method', 'route', 'status'),
+)
+http_request_duration = Summary(
+    'http_request_duration_seconds', 'HTTP request duration in seconds',
+    ('service', 'method', 'route'),
+)
+
+
+@app.before_request
+def start_request_timer():
+    g.start_time = perf_counter()
+
+
+@app.after_request
+def record_request_metrics(response):
+    if request.path != '/metrics':
+        route = request.url_rule.rule if request.url_rule else 'unmatched'
+        method = request.method if request.method in {'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'} else 'OTHER'
+        labels = ('flag-service', method, route)
+        http_requests.labels(*labels, str(response.status_code)).inc()
+        http_request_duration.labels(*labels).observe(perf_counter() - g.start_time)
+    return response
+
+
+@app.route('/metrics')
+def metrics():
+    return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
 
 # --- Configuração ---
 
